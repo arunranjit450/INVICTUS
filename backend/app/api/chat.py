@@ -10,6 +10,7 @@ from app.security.output_guard import OutputAction, analyze_output
 from app.security.policy_engine import PolicyAction, evaluate_session_policy
 from app.security.session_guard import get_or_create_session, record_event
 from app.security.stream_guard import StreamGuard
+from app.security.telemetry import classify_attack_type, record_telemetry_event
 from app.services.llm_service import get_mock_llm
 
 router = APIRouter()
@@ -65,6 +66,15 @@ def chat_endpoint(request: ChatRequest):
             threat_types=["session_policy_block"],
             increment_request_count=True,
         )
+        record_telemetry_event(
+            session_id=session_id,
+            attack_type="session_policy_block",
+            severity="CRITICAL",
+            threat_score=100,
+            enforcement_action="BLOCK",
+            matched_signals=["session_risk_critical_policy_enforcement"],
+            cumulative_session_score=session_state.cumulative_score,
+        )
         return JSONResponse(
             status_code=status.HTTP_403_FORBIDDEN,
             content={
@@ -100,6 +110,20 @@ def chat_endpoint(request: ChatRequest):
             action=input_analysis["action"],
             threat_types=input_analysis["threat_types"],
             increment_request_count=True,
+        )
+        attack_type = classify_attack_type(
+            threat_types=input_analysis["threat_types"],
+            matched_signals=input_analysis["matched_signals"],
+            default="prompt_injection",
+        )
+        record_telemetry_event(
+            session_id=session_id,
+            attack_type=attack_type,
+            severity="CRITICAL",
+            threat_score=input_analysis["threat_score"],
+            enforcement_action="BLOCK",
+            matched_signals=input_analysis["matched_signals"],
+            cumulative_session_score=session_state.cumulative_score,
         )
         return JSONResponse(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -167,6 +191,80 @@ def chat_endpoint(request: ChatRequest):
         threat_types=output_analysis["leak_types"],
         increment_request_count=False,
     )
+
+    # Record Telemetry Event for requests reaching Output Guard / Stream Guard
+    if guard.terminated:
+        attack_type = classify_attack_type(
+            threat_types=output_analysis.get("leak_types"),
+            matched_signals=output_analysis.get("matched_signals"),
+            default="stream_interception_leak",
+        )
+        record_telemetry_event(
+            session_id=session_id,
+            attack_type=attack_type,
+            severity="CRITICAL",
+            threat_score=output_analysis.get("threat_score", 100),
+            enforcement_action="BLOCK",
+            matched_signals=output_analysis.get("matched_signals", ["stream_interception_leak_detected"]),
+            cumulative_session_score=session_state.cumulative_score,
+        )
+    elif output_analysis["action"] == OutputAction.BLOCK.value:
+        attack_type = classify_attack_type(
+            threat_types=output_analysis.get("leak_types"),
+            matched_signals=output_analysis.get("matched_signals"),
+            default="confidential_data_extraction",
+        )
+        record_telemetry_event(
+            session_id=session_id,
+            attack_type=attack_type,
+            severity="CRITICAL",
+            threat_score=output_analysis["threat_score"],
+            enforcement_action="BLOCK",
+            matched_signals=output_analysis.get("matched_signals", []),
+            cumulative_session_score=session_state.cumulative_score,
+        )
+    elif output_analysis["action"] == OutputAction.INTERCEPT.value:
+        attack_type = classify_attack_type(
+            threat_types=output_analysis.get("leak_types"),
+            matched_signals=output_analysis.get("matched_signals"),
+            default="confidential_data_extraction",
+        )
+        record_telemetry_event(
+            session_id=session_id,
+            attack_type=attack_type,
+            severity="HIGH",
+            threat_score=output_analysis["threat_score"],
+            enforcement_action="INTERCEPT",
+            matched_signals=output_analysis.get("matched_signals", []),
+            cumulative_session_score=session_state.cumulative_score,
+        )
+    elif input_analysis["action"] == Action.MONITOR.value or output_analysis["action"] == OutputAction.MONITOR.value:
+        combined_types = input_analysis["threat_types"] + output_analysis.get("leak_types", [])
+        combined_signals = input_analysis["matched_signals"] + output_analysis.get("matched_signals", [])
+        attack_type = classify_attack_type(
+            threat_types=combined_types,
+            matched_signals=combined_signals,
+            default="monitored_activity",
+        )
+        record_telemetry_event(
+            session_id=session_id,
+            attack_type=attack_type,
+            severity="MEDIUM",
+            threat_score=max(input_analysis["threat_score"], output_analysis["threat_score"]),
+            enforcement_action="MONITOR",
+            matched_signals=combined_signals,
+            cumulative_session_score=session_state.cumulative_score,
+        )
+    else:
+        record_telemetry_event(
+            session_id=session_id,
+            attack_type="benign_query",
+            severity="LOW",
+            threat_score=0,
+            enforcement_action="ALLOW",
+            matched_signals=[],
+            cumulative_session_score=session_state.cumulative_score,
+        )
 
     return {
         "blocked": False,

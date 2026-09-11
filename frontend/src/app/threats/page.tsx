@@ -43,6 +43,18 @@ interface ThreatEvent {
   risk_level: string;
 }
 
+interface TelemetryEvent {
+  id: string;
+  session_id: string;
+  timestamp: string;
+  attack_type: string;
+  severity: string;
+  threat_score: number;
+  enforcement_action: string;
+  matched_signals: string[];
+  cumulative_session_score: number;
+}
+
 function getCanonicalSignal(threatType: string): string {
   const t = threatType.toLowerCase();
   if (t.includes("prompt_injection")) return "instruction_override_attempt";
@@ -57,6 +69,7 @@ function getCanonicalSignal(threatType: string): string {
 export default function ThreatsPage() {
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [sessions, setSessions] = useState<SessionRecord[]>([]);
+  const [events, setEvents] = useState<TelemetryEvent[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
@@ -66,25 +79,31 @@ export default function ThreatsPage() {
 
   const fetchThreatData = useCallback(async () => {
     try {
-      const [summaryRes, sessionsRes] = await Promise.all([
-        fetch("http://127.0.0.1:8000/api/v1/dashboard/summary", {
+      const [overviewRes, eventsRes, sessionsRes] = await Promise.all([
+        fetch("http://127.0.0.1:8000/api/dashboard/overview", {
           headers: { Accept: "application/json" },
           cache: "no-store",
         }),
-        fetch("http://127.0.0.1:8000/api/v1/dashboard/sessions", {
+        fetch("http://127.0.0.1:8000/api/dashboard/events", {
+          headers: { Accept: "application/json" },
+          cache: "no-store",
+        }),
+        fetch("http://127.0.0.1:8000/api/dashboard/sessions", {
           headers: { Accept: "application/json" },
           cache: "no-store",
         }),
       ]);
 
-      if (!summaryRes.ok || !sessionsRes.ok) {
-        throw new Error(`Gateway returned error status (summary: ${summaryRes.status}, sessions: ${sessionsRes.status})`);
+      if (!overviewRes.ok || !eventsRes.ok) {
+        throw new Error(`Gateway returned error status (overview: ${overviewRes.status}, events: ${eventsRes.status})`);
       }
 
-      const summaryData: DashboardSummary = await summaryRes.json();
-      const sessionsData: SessionRecord[] = await sessionsRes.json();
+      const summaryData: DashboardSummary = await overviewRes.json();
+      const eventsData: TelemetryEvent[] = await eventsRes.json();
+      const sessionsData: SessionRecord[] = sessionsRes.ok ? await sessionsRes.json() : [];
 
       setSummary(summaryData);
+      setEvents(Array.isArray(eventsData) ? eventsData : []);
       setSessions(Array.isArray(sessionsData) ? sessionsData : []);
       setError(null);
       setLastUpdated(new Date());
@@ -132,15 +151,46 @@ export default function ThreatsPage() {
     return summary.monitored_sessions + summary.high_risk_sessions;
   }, [summary]);
 
-  // Derive granular threat events from in-memory session guard data
+  // Derive granular threat events from real-time backend telemetry events (newest first)
   const threatEvents: ThreatEvent[] = useMemo(() => {
-    const events: ThreatEvent[] = [];
+    if (events.length > 0) {
+      return events.map((ev) => {
+        let formattedTime = ev.timestamp;
+        try {
+          const date = new Date(ev.timestamp);
+          if (!isNaN(date.getTime())) {
+            formattedTime = date.toLocaleTimeString();
+          }
+        } catch {
+          // fallback to raw timestamp string
+        }
+
+        const primarySignal =
+          ev.matched_signals && ev.matched_signals.length > 0
+            ? ev.matched_signals[0]
+            : getCanonicalSignal(ev.attack_type);
+
+        return {
+          id: ev.id,
+          timestamp: formattedTime,
+          session_id: ev.session_id,
+          threat_type: ev.attack_type,
+          threat_score: ev.threat_score,
+          action: ev.enforcement_action,
+          matched_signal: primarySignal,
+          risk_level: ev.severity,
+        };
+      });
+    }
+
+    // Fallback if no telemetry events recorded yet: derive from sessions
+    const fallbackEvents: ThreatEvent[] = [];
     const formattedTime = lastUpdated ? lastUpdated.toLocaleTimeString() : "Live Gateway";
 
     for (const s of sessions) {
       if (s.threat_types_seen && s.threat_types_seen.length > 0) {
         for (const tType of s.threat_types_seen) {
-          events.push({
+          fallbackEvents.push({
             id: `${s.session_id}-${tType}`,
             timestamp: formattedTime,
             session_id: s.session_id,
@@ -152,7 +202,7 @@ export default function ThreatsPage() {
           });
         }
       } else if (s.blocked_count > 0) {
-        events.push({
+        fallbackEvents.push({
           id: `${s.session_id}-session-policy-block`,
           timestamp: formattedTime,
           session_id: s.session_id,
@@ -165,8 +215,8 @@ export default function ThreatsPage() {
       }
     }
 
-    return events;
-  }, [sessions, lastUpdated]);
+    return fallbackEvents;
+  }, [events, sessions, lastUpdated]);
 
   // Filtered threat events
   const filteredEvents = useMemo(() => {

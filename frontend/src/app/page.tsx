@@ -32,7 +32,7 @@ export default function SecurityDashboard() {
 
   const fetchDashboardData = useCallback(async () => {
     try {
-      const res = await fetch("http://127.0.0.1:8000/api/v1/dashboard/summary", {
+      const res = await fetch("http://127.0.0.1:8000/api/dashboard/overview", {
         headers: { Accept: "application/json" },
         cache: "no-store",
       });
@@ -316,7 +316,7 @@ export default function SecurityDashboard() {
               <div className="flex-1">
                 <span className="font-semibold text-white">Backend Connection Offline:</span> Unable to reach FastAPI gateway at{" "}
                 <code className="rounded bg-rose-950/80 px-1 py-0.5 text-xs text-rose-300 font-mono">
-                  http://127.0.0.1:8000/api/v1/dashboard/summary
+                  http://127.0.0.1:8000/api/dashboard/overview
                 </code>
                 . Please verify the backend is running with{" "}
                 <code className="rounded bg-black/40 px-1.5 py-0.5 text-xs font-mono text-slate-200">

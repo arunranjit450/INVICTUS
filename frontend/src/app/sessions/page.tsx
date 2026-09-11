@@ -24,7 +24,7 @@ export default function SessionsPage() {
 
   const fetchSessions = useCallback(async () => {
     try {
-      const res = await fetch("http://127.0.0.1:8000/api/v1/dashboard/sessions", {
+      const res = await fetch("http://127.0.0.1:8000/api/dashboard/sessions", {
         headers: { Accept: "application/json" },
         cache: "no-store",
       });

@@ -5,16 +5,19 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.security.session_guard import clear_sessions, record_event
+from app.security.telemetry import clear_telemetry_events, record_telemetry_event
 
 client = TestClient(app)
 
 
 @pytest.fixture(autouse=True)
 def reset_session_state():
-    """Ensure in-memory session tracker is clear before and after each test."""
+    """Ensure in-memory session tracker and telemetry store are clear before and after each test."""
     clear_sessions()
+    clear_telemetry_events()
     yield
     clear_sessions()
+    clear_telemetry_events()
 
 
 def test_dashboard_empty_state():
@@ -247,5 +250,77 @@ def test_dashboard_sessions_privacy():
     assert set(session.keys()) == allowed_keys
     for forbidden in ["query", "prompt", "response", "token", "source_code", "key", "content"]:
         assert forbidden not in session
+
+
+def test_dashboard_overview_and_threat_distribution_endpoints():
+    """Verify /api/dashboard/overview and /api/dashboard/threat-distribution endpoints."""
+    record_event("sess-overview", threat_score=85, action="BLOCK", threat_types=["prompt_injection"])
+
+    # Test /api/dashboard/overview
+    overview_res = client.get("/api/dashboard/overview")
+    assert overview_res.status_code == 200
+    overview_data = overview_res.json()
+    assert overview_data["total_sessions"] == 1
+    assert overview_data["total_blocked"] == 1
+    assert overview_data["critical_sessions"] == 1
+    assert overview_data["threat_distribution"]["prompt_injection"] == 1
+
+    # Test /api/dashboard/threat-distribution
+    dist_res = client.get("/api/dashboard/threat-distribution")
+    assert dist_res.status_code == 200
+    dist_data = dist_res.json()
+    assert dist_data["prompt_injection"] == 1
+    assert dist_data["system_prompt_extraction"] == 0
+
+
+def test_dashboard_events_endpoint():
+    """Verify /api/dashboard/events returns recorded events newest first."""
+    record_telemetry_event(
+        session_id="sess-evt-1",
+        attack_type="benign_query",
+        severity="LOW",
+        threat_score=0,
+        enforcement_action="ALLOW",
+        matched_signals=[],
+        cumulative_session_score=0,
+    )
+    record_telemetry_event(
+        session_id="sess-evt-2",
+        attack_type="prompt_injection",
+        severity="CRITICAL",
+        threat_score=85,
+        enforcement_action="BLOCK",
+        matched_signals=["instruction_override_attempt"],
+        cumulative_session_score=85,
+    )
+
+    res = client.get("/api/dashboard/events")
+    assert res.status_code == 200
+    events = res.json()
+    assert len(events) == 2
+
+    # Newest first
+    assert events[0]["session_id"] == "sess-evt-2"
+    assert events[0]["attack_type"] == "prompt_injection"
+    assert events[0]["severity"] == "CRITICAL"
+    assert events[0]["threat_score"] == 85
+    assert events[0]["enforcement_action"] == "BLOCK"
+    assert events[0]["matched_signals"] == ["instruction_override_attempt"]
+    assert events[0]["cumulative_session_score"] == 85
+    assert "timestamp" in events[0]
+
+    assert events[1]["session_id"] == "sess-evt-1"
+    assert events[1]["enforcement_action"] == "ALLOW"
+
+
+def test_dashboard_sessions_endpoint_on_api_prefix():
+    """Verify /api/dashboard/sessions functions identical to /api/v1/dashboard/sessions."""
+    record_event("sess-prefix-test", threat_score=15, action="ALLOW", threat_types=[])
+    res = client.get("/api/dashboard/sessions")
+    assert res.status_code == 200
+    data = res.json()
+    assert len(data) == 1
+    assert data[0]["session_id"] == "sess-prefix-test"
+
 
 
