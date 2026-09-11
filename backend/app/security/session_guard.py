@@ -117,6 +117,11 @@ class SessionTracker:
 
             return session.model_copy(deep=True)
 
+    def get_all_sessions(self) -> List[SessionState]:
+        """Returns a snapshot copy of all active sessions."""
+        with self._lock:
+            return [s.model_copy(deep=True) for s in self._sessions.values()]
+
     def clear(self) -> None:
         """Resets all tracked sessions (used in test isolation)."""
         with self._lock:
@@ -130,6 +135,11 @@ _tracker = SessionTracker()
 def get_or_create_session(session_id: str) -> SessionState:
     """Thread-safe function to retrieve or create a SessionState."""
     return _tracker.get_or_create_session(session_id)
+
+
+def get_all_sessions() -> List[SessionState]:
+    """Thread-safe function to retrieve all active session states."""
+    return _tracker.get_all_sessions()
 
 
 def record_event(

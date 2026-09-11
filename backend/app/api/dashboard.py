@@ -1,0 +1,63 @@
+"""Security Dashboard API router for LLM Tripwire."""
+
+from fastapi import APIRouter
+from app.security.session_guard import get_all_sessions
+
+router = APIRouter()
+
+
+def _classify_threat(threat: str) -> str:
+    """Classifies a raw threat type into standard dashboard categories."""
+    t = threat.lower()
+    if "prompt_injection" in t:
+        return "prompt_injection"
+    if "system_prompt" in t:
+        return "system_prompt_extraction"
+    if "source_code" in t:
+        return "source_code_extraction"
+    if "confidential" in t:
+        return "confidential_data_extraction"
+    return "other"
+
+
+@router.get("/dashboard/summary")
+def get_dashboard_summary():
+    """Returns real-time SOC security summary metrics based on in-memory Session Guard state."""
+    sessions = get_all_sessions()
+
+    total_sessions = len(sessions)
+    active_sessions = len(sessions)
+    total_requests = sum(s.request_count for s in sessions)
+    total_blocked = sum(s.blocked_count for s in sessions)
+
+    critical_sessions = sum(1 for s in sessions if s.risk_level.upper() == "CRITICAL")
+    high_risk_sessions = sum(1 for s in sessions if s.risk_level.upper() == "HIGH")
+    monitored_sessions = sum(
+        1 for s in sessions
+        if (s.risk_level.upper() == "GUARDED" or s.last_action == "MONITOR")
+        and s.risk_level.upper() not in ("CRITICAL", "HIGH")
+    )
+
+    threat_distribution = {
+        "prompt_injection": 0,
+        "system_prompt_extraction": 0,
+        "source_code_extraction": 0,
+        "confidential_data_extraction": 0,
+        "other": 0,
+    }
+
+    for s in sessions:
+        for threat in s.threat_types_seen:
+            category = _classify_threat(threat)
+            threat_distribution[category] += 1
+
+    return {
+        "total_sessions": total_sessions,
+        "active_sessions": active_sessions,
+        "total_requests": total_requests,
+        "total_blocked": total_blocked,
+        "critical_sessions": critical_sessions,
+        "high_risk_sessions": high_risk_sessions,
+        "monitored_sessions": monitored_sessions,
+        "threat_distribution": threat_distribution,
+    }

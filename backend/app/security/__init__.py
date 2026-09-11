@@ -23,6 +23,7 @@ from app.security.session_guard import (
     SessionState,
     calculate_risk_level,
     clear_sessions,
+    get_all_sessions,
     get_or_create_session,
     record_event,
 )
@@ -38,6 +39,7 @@ __all__ = [
     "SessionState",
     "calculate_risk_level",
     "clear_sessions",
+    "get_all_sessions",
     "get_or_create_session",
     "record_event",
     "PolicyAction",
