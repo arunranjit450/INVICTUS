@@ -152,3 +152,39 @@ def test_dashboard_privacy_no_sensitive_leaks():
     assert "tokens" not in data
     assert "credentials" not in data
     assert "content" not in data
+
+
+def test_dashboard_cors_allowed_origins():
+    """Verify CORS headers when accessing dashboard from allowed frontend origins."""
+    for origin in ["http://localhost:3000", "http://127.0.0.1:3000"]:
+        # Test GET with Origin header
+        response = client.get(
+            "/api/v1/dashboard/summary",
+            headers={"Origin": origin},
+        )
+        assert response.status_code == 200
+        assert response.headers.get("access-control-allow-origin") == origin
+
+        # Test preflight OPTIONS request
+        options_res = client.options(
+            "/api/v1/dashboard/summary",
+            headers={
+                "Origin": origin,
+                "Access-Control-Request-Method": "GET",
+                "Access-Control-Request-Headers": "accept",
+            },
+        )
+        assert options_res.status_code == 200
+        assert options_res.headers.get("access-control-allow-origin") == origin
+        allowed_methods = options_res.headers.get("access-control-allow-methods", "")
+        for method in ["GET", "POST", "OPTIONS"]:
+            assert method in allowed_methods
+
+    # Verify disallowed origin does not receive access-control-allow-origin
+    unauthorized_res = client.get(
+        "/api/v1/dashboard/summary",
+        headers={"Origin": "http://unauthorized-domain.com"},
+    )
+    assert unauthorized_res.status_code == 200
+    assert "access-control-allow-origin" not in unauthorized_res.headers
+
