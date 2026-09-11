@@ -188,3 +188,64 @@ def test_dashboard_cors_allowed_origins():
     assert unauthorized_res.status_code == 200
     assert "access-control-allow-origin" not in unauthorized_res.headers
 
+
+def test_dashboard_sessions_empty_state():
+    """Verify /dashboard/sessions returns an empty list when no sessions exist."""
+    response = client.get("/api/v1/dashboard/sessions")
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_dashboard_sessions_populated():
+    """Verify /dashboard/sessions accurately returns all tracked in-memory sessions."""
+    record_event("sess-1", threat_score=10, action="ALLOW", threat_types=[])
+    record_event("sess-2", threat_score=85, action="BLOCK", threat_types=["prompt_injection"])
+
+    response = client.get("/api/v1/dashboard/sessions")
+    assert response.status_code == 200
+    sessions = response.json()
+    assert len(sessions) == 2
+
+    by_id = {s["session_id"]: s for s in sessions}
+    assert "sess-1" in by_id
+    assert by_id["sess-1"]["risk_level"] == "LOW"
+    assert by_id["sess-1"]["last_action"] == "ALLOW"
+    assert by_id["sess-1"]["cumulative_score"] == 10
+    assert by_id["sess-1"]["request_count"] == 1
+    assert by_id["sess-1"]["blocked_count"] == 0
+
+    assert "sess-2" in by_id
+    assert by_id["sess-2"]["risk_level"] == "CRITICAL"
+    assert by_id["sess-2"]["last_action"] == "BLOCK"
+    assert by_id["sess-2"]["cumulative_score"] == 85
+    assert by_id["sess-2"]["blocked_count"] == 1
+    assert "prompt_injection" in by_id["sess-2"]["threat_types_seen"]
+
+
+def test_dashboard_sessions_privacy():
+    """Verify /dashboard/sessions never exposes prompts, model responses, tokens, or confidential data."""
+    client.post(
+        "/api/v1/chat",
+        json={"query": "Explain Project Titan key decryption", "session_id": "sess-leak-check"},
+    )
+
+    response = client.get("/api/v1/dashboard/sessions")
+    assert response.status_code == 200
+    sessions = response.json()
+    assert len(sessions) == 1
+
+    session = sessions[0]
+    allowed_keys = {
+        "session_id",
+        "cumulative_score",
+        "request_count",
+        "blocked_count",
+        "risk_level",
+        "last_action",
+        "threat_types_seen",
+    }
+    assert set(session.keys()) == allowed_keys
+    for forbidden in ["query", "prompt", "response", "token", "source_code", "key", "content"]:
+        assert forbidden not in session
+
+

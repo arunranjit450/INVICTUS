@@ -61,3 +61,32 @@ def get_dashboard_summary():
         "monitored_sessions": monitored_sessions,
         "threat_distribution": threat_distribution,
     }
+
+
+@router.get("/dashboard/sessions")
+def get_dashboard_sessions():
+    """Returns real-time session records from Session Guard.
+
+    Exposes only telemetry fields:
+    - session_id
+    - cumulative_score
+    - request_count
+    - blocked_count
+    - risk_level
+    - last_action
+    - threat_types_seen
+    """
+    sessions = get_all_sessions()
+    return [
+        {
+            "session_id": s.session_id,
+            "cumulative_score": s.cumulative_score,
+            "request_count": s.request_count,
+            "blocked_count": s.blocked_count,
+            "risk_level": s.risk_level,
+            "last_action": s.last_action,
+            "threat_types_seen": s.threat_types_seen,
+        }
+        for s in sessions
+    ]
+
