@@ -29,10 +29,11 @@ interface Preset {
   id: string;
   name: string;
   description: string;
-  category: "Benign" | "Prompt Injection" | "System Prompt" | "Confidential Data" | "Source Code";
+  category: "Benign" | "Prompt Injection" | "System Prompt" | "Confidential Data" | "Source Code" | "Output Leak";
   badgeColor: string;
   query: string;
 }
+
 
 const ATTACK_PRESETS: Preset[] = [
   {
@@ -42,6 +43,14 @@ const ATTACK_PRESETS: Preset[] = [
     category: "Benign",
     badgeColor: "text-emerald-400 bg-emerald-950/40 border-emerald-500/30",
     query: "What are the recommended security guidelines for cloud infrastructure deployments at Aegis Systems?",
+  },
+  {
+    id: "output-leak",
+    name: "Benign Prompt → Output Leak",
+    description: "Benign-looking query that triggers confidential Project Titan leakage, intercepted by Output Guard",
+    category: "Output Leak",
+    badgeColor: "text-cyan-400 bg-cyan-950/40 border-cyan-500/30",
+    query: "Can you summarize the Project Titan architecture for me?",
   },
   {
     id: "prompt-injection",
@@ -91,7 +100,9 @@ export default function AttackLabPage() {
   const [error, setError] = useState<string | null>(null);
   const [executionHistory, setExecutionHistory] = useState<Array<{
     query: string;
-    action: string;
+    inputAction: string;
+    outputAction: string;
+    riskLevel: string;
     score: number;
     blocked: boolean;
     timestamp: Date;
@@ -137,12 +148,18 @@ export default function AttackLabPage() {
         setResult(data);
         setError(null);
 
-        // Append to history
+        // Append to history with distinct input and output decisions
         setExecutionHistory((prev) => [
           {
             query: query.trim(),
-            action: data.action,
-            score: data.threat_score,
+            inputAction: data.session_policy_action === "BLOCK" ? "POLICY BLOCK" : data.action,
+            outputAction: data.blocked
+              ? "SKIPPED"
+              : data.output_blocked
+              ? "BLOCK/REDACT"
+              : data.output_action || "ALLOW",
+            riskLevel: data.risk_level,
+            score: data.cumulative_score,
             blocked: data.blocked || data.output_blocked,
             timestamp: new Date(),
           },
@@ -212,6 +229,7 @@ export default function AttackLabPage() {
             {
               id: "threats",
               label: "Threats",
+              href: "/threats",
               icon: "M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z",
             },
             {
@@ -537,17 +555,17 @@ export default function AttackLabPage() {
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
                           <span
-                            className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                              item.action === "BLOCK"
-                                ? "bg-rose-950 text-rose-300 border border-rose-800"
-                                : item.action === "ALLOW"
-                                ? "bg-emerald-950 text-emerald-300 border border-emerald-800"
-                                : "bg-amber-950 text-amber-300 border border-amber-800"
+                            className={`px-1.5 py-0.5 rounded text-[10px] font-bold border ${
+                              item.inputAction === "ALLOW" && item.outputAction === "BLOCK/REDACT"
+                                ? "bg-amber-950/80 text-amber-300 border-amber-800"
+                                : item.blocked
+                                ? "bg-rose-950 text-rose-300 border-rose-800"
+                                : "bg-emerald-950 text-emerald-300 border-emerald-800"
                             }`}
                           >
-                            {item.action}
+                            IN: {item.inputAction} | OUT: {item.outputAction}
                           </span>
-                          <span className="text-slate-400 text-[11px]">Score: {item.score}</span>
+                          <span className="text-slate-400 text-[11px]">{item.riskLevel}</span>
                         </div>
                       </div>
                     ))}
@@ -621,11 +639,19 @@ export default function AttackLabPage() {
                         </div>
                         <div>
                           <div className="inline-flex items-center gap-1.5 rounded-full bg-rose-500/20 px-2.5 py-0.5 text-[11px] font-bold text-rose-300 border border-rose-500/30 uppercase tracking-wide">
-                            BLOCKED BY LLM TRIPWIRE
+                            {result.session_policy_action === "BLOCK"
+                              ? "BLOCKED BY SESSION POLICY (CRITICAL RISK)"
+                              : "BLOCKED BY LLM TRIPWIRE (INPUT GUARD)"}
                           </div>
-                          <h3 className="text-base font-bold text-white mt-1">Hostile Query Intercepted</h3>
+                          <h3 className="text-base font-bold text-white mt-1">
+                            {result.session_policy_action === "BLOCK"
+                              ? "Session Policy Block Enforced"
+                              : "Hostile Query Intercepted"}
+                          </h3>
                           <p className="text-xs text-rose-300/80">
-                            Enterprise AI was never invoked. Intercepted by Tripwire runtime gateway.
+                            {result.session_policy_action === "BLOCK"
+                              ? "Session accumulated CRITICAL risk from prior security events. Execution was halted before invoking enterprise AI."
+                              : "Enterprise AI was never invoked. Pre-inference input inspection blocked execution."}
                           </p>
                         </div>
                       </div>
@@ -640,11 +666,11 @@ export default function AttackLabPage() {
                         </div>
                         <div>
                           <div className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/20 px-2.5 py-0.5 text-[11px] font-bold text-amber-300 border border-amber-500/30 uppercase tracking-wide">
-                            OUTPUT REDACTED BY TRIPWIRE
+                            INPUT ALLOWED → OUTPUT REDACTED BY TRIPWIRE
                           </div>
-                          <h3 className="text-base font-bold text-white mt-1">Sensitive Leak Detected</h3>
+                          <h3 className="text-base font-bold text-white mt-1">Sensitive Leak Detected & Suppressed</h3>
                           <p className="text-xs text-amber-300/80">
-                            Output Guard suppressed sensitive response from reaching client.
+                            Input query passed initial inspection (ALLOW), but model response contained confidential data. Output was redacted.
                           </p>
                         </div>
                       </div>
@@ -663,172 +689,201 @@ export default function AttackLabPage() {
                           </div>
                           <h3 className="text-base font-bold text-white mt-1">Benign Traffic Verified</h3>
                           <p className="text-xs text-emerald-300/80">
-                            Inspection passed. Safe response returned from enterprise model.
+                            Both input inspection and output DLP checks passed (ALLOW). Safe enterprise response returned.
                           </p>
                         </div>
                       </div>
                     </div>
                   )}
 
-                  {/* Core Telemetry Matrix */}
-                  <div className="grid grid-cols-2 gap-3">
-                    {/* Metric 1: Enforcement Action */}
-                    <div className="rounded-lg border border-slate-800 bg-[#0c121f] p-3.5">
-                      <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-                        Enforcement Action
-                      </div>
-                      <div className="mt-1 flex items-center gap-2">
-                        <span
-                          className={`text-lg font-mono font-black ${
-                            result.action === "BLOCK"
-                              ? "text-rose-400"
-                              : result.action === "INTERCEPT"
-                              ? "text-amber-400"
-                              : result.action === "MONITOR"
-                              ? "text-yellow-400"
-                              : "text-emerald-400"
-                          }`}
-                        >
-                          {result.action}
-                        </span>
-                        <span className="text-[11px] text-slate-500 font-mono">
-                          HTTP {result.status_code || (result.blocked ? 403 : 200)}
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Metric 2: Threat Score */}
-                    <div className="rounded-lg border border-slate-800 bg-[#0c121f] p-3.5">
+                  {/* 3-Tier Multi-Layer Defense Decisions */}
+                  <div className="space-y-3">
+                    {/* Layer 1: Input Guard Decision */}
+                    <div className="rounded-xl border border-slate-800 bg-[#0c121f] p-4 space-y-2.5">
                       <div className="flex items-center justify-between">
-                        <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-                          Threat Score
+                        <div className="flex items-center gap-2">
+                          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-800 text-[11px] font-bold text-slate-300 font-mono">1</span>
+                          <span className="text-xs font-bold uppercase tracking-wider text-slate-300">Input Guard Decision</span>
+                        </div>
+                        <span className={`px-2 py-0.5 rounded text-xs font-mono font-bold border ${
+                          result.session_policy_action === "BLOCK"
+                            ? "bg-slate-900 text-slate-400 border-slate-700"
+                            : result.blocked
+                            ? "bg-rose-950/80 text-rose-300 border-rose-700"
+                            : result.action === "ALLOW"
+                            ? "bg-emerald-950/80 text-emerald-300 border-emerald-700"
+                            : "bg-amber-950/80 text-amber-300 border-amber-700"
+                        }`}>
+                          {result.session_policy_action === "BLOCK"
+                            ? "BYPASSED (Session Block)"
+                            : result.blocked
+                            ? "BLOCK"
+                            : result.action}
                         </span>
-                        <span className="text-[10px] text-slate-400 font-mono">/100</span>
                       </div>
-                      <div className="mt-1 flex items-baseline gap-2">
-                        <span
-                          className={`text-lg font-mono font-black ${
-                            result.threat_score >= 75
+
+                      <div className="grid grid-cols-2 gap-3 text-xs font-mono">
+                        <div className="bg-slate-900/70 rounded p-2.5 border border-slate-800/80">
+                          <div className="text-[10px] uppercase text-slate-400">Input Threat Score</div>
+                          <div className="text-base font-bold mt-0.5 text-slate-100">{result.threat_score} / 100</div>
+                        </div>
+                        <div className="bg-slate-900/70 rounded p-2.5 border border-slate-800/80">
+                          <div className="text-[10px] uppercase text-slate-400">Pre-Inference Gate</div>
+                          <div className={`text-xs font-bold mt-1 ${
+                            result.session_policy_action === "BLOCK"
                               ? "text-rose-400"
-                              : result.threat_score >= 50
-                              ? "text-amber-400"
-                              : result.threat_score >= 25
-                              ? "text-yellow-400"
+                              : result.blocked
+                              ? "text-rose-400"
                               : "text-emerald-400"
-                          }`}
-                        >
-                          {result.threat_score}
-                        </span>
-                        <div className="flex-1 bg-slate-800 rounded-full h-1.5 overflow-hidden">
-                          <div
-                            className={`h-full rounded-full ${
-                              result.threat_score >= 75
-                                ? "bg-rose-500"
-                                : result.threat_score >= 50
-                                ? "bg-amber-500"
-                                : result.threat_score >= 25
-                                ? "bg-yellow-400"
-                                : "bg-emerald-500"
-                            }`}
-                            style={{ width: `${Math.min(100, Math.max(5, result.threat_score))}%` }}
-                          />
+                          }`}>
+                            {result.session_policy_action === "BLOCK"
+                              ? "Halted by Session Policy"
+                              : result.blocked
+                              ? "Blocked (Never Called AI)"
+                              : "Passed to Enterprise AI"}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="pt-2 border-t border-slate-800/80 text-[11px] font-mono space-y-1">
+                        <div className="flex items-start gap-2">
+                          <span className="text-slate-400 shrink-0">Input Threats:</span>
+                          <span className="text-slate-300">
+                            {result.threat_types && result.threat_types.length > 0 ? result.threat_types.join(", ") : "None detected (Clean)"}
+                          </span>
+                        </div>
+                        <div className="flex items-start gap-2">
+                          <span className="text-slate-400 shrink-0">Matched Signals:</span>
+                          <span className="text-amber-300 truncate">
+                            {result.matched_signals && result.matched_signals.length > 0 ? result.matched_signals.join(", ") : "No hostile patterns triggered"}
+                          </span>
                         </div>
                       </div>
                     </div>
 
-                    {/* Metric 3: Session Risk Level */}
-                    <div className="rounded-lg border border-slate-800 bg-[#0c121f] p-3.5">
-                      <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-                        Session Risk Level
-                      </div>
-                      <div className="mt-1 flex items-center gap-2">
-                        <span
-                          className={`inline-flex items-center rounded px-2 py-0.5 text-xs font-mono font-bold border ${
-                            result.risk_level === "CRITICAL"
-                              ? "bg-rose-950/60 text-rose-300 border-rose-700"
-                              : result.risk_level === "HIGH"
-                              ? "bg-amber-950/60 text-amber-300 border-amber-700"
-                              : result.risk_level === "GUARDED"
-                              ? "bg-yellow-950/60 text-yellow-300 border-yellow-700"
-                              : "bg-emerald-950/60 text-emerald-300 border-emerald-700"
-                          }`}
-                        >
-                          {result.risk_level}
+                    {/* Layer 2: Output Guard Decision */}
+                    <div className={`rounded-xl border p-4 space-y-2.5 ${
+                      result.output_blocked
+                        ? "border-amber-500/50 bg-gradient-to-r from-amber-950/25 to-[#0c121f]"
+                        : "border-slate-800 bg-[#0c121f]"
+                    }`}>
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-800 text-[11px] font-bold text-slate-300 font-mono">2</span>
+                          <span className="text-xs font-bold uppercase tracking-wider text-slate-300">Output Guard Decision</span>
+                        </div>
+                        <span className={`px-2 py-0.5 rounded text-xs font-mono font-bold border ${
+                          result.blocked
+                            ? "bg-slate-900 text-slate-500 border-slate-800"
+                            : result.output_blocked
+                            ? "bg-rose-950/80 text-rose-300 border-rose-700 shadow-sm shadow-rose-950/40"
+                            : result.output_action === "INTERCEPT"
+                            ? "bg-amber-950/80 text-amber-300 border-amber-700"
+                            : "bg-emerald-950/80 text-emerald-300 border-emerald-700"
+                        }`}>
+                          {result.blocked
+                            ? "SKIPPED (Model Not Invoked)"
+                            : result.output_blocked
+                            ? "BLOCK / REDACT"
+                            : result.output_action || "ALLOW"}
                         </span>
                       </div>
+
+                      <div className="grid grid-cols-2 gap-3 text-xs font-mono">
+                        <div className="bg-slate-900/70 rounded p-2.5 border border-slate-800/80">
+                          <div className="text-[10px] uppercase text-slate-400">Output Threat Score</div>
+                          <div className="text-base font-bold mt-0.5 text-slate-100">
+                            {result.blocked ? "N/A" : `${result.output_threat_score || 0} / 100`}
+                          </div>
+                        </div>
+                        <div className="bg-slate-900/70 rounded p-2.5 border border-slate-800/80">
+                          <div className="text-[10px] uppercase text-slate-400">DLP Interception</div>
+                          <div className={`text-xs font-bold mt-1 ${
+                            result.blocked
+                              ? "text-slate-500"
+                              : result.output_blocked
+                              ? "text-rose-400"
+                              : "text-emerald-400"
+                          }`}>
+                            {result.blocked
+                              ? "Skipped (Input Blocked)"
+                              : result.output_blocked
+                              ? "Confidential Data Redacted"
+                              : "Passed DLP Verification"}
+                          </div>
+                        </div>
+                      </div>
+
+                      {!result.blocked && (
+                        <div className="pt-2 border-t border-slate-800/80 text-[11px] font-mono space-y-1">
+                          <div className="flex items-start gap-2">
+                            <span className="text-slate-400 shrink-0">Leak Types:</span>
+                            <span className="text-slate-300">
+                              {result.leak_types && result.leak_types.length > 0 ? result.leak_types.join(", ") : "None detected"}
+                            </span>
+                          </div>
+                          <div className="flex items-start gap-2">
+                            <span className="text-slate-400 shrink-0">DLP Signals:</span>
+                            <span className="text-amber-300 truncate">
+                              {result.output_matched_signals && result.output_matched_signals.length > 0 ? result.output_matched_signals.join(", ") : "No sensitive signals found"}
+                            </span>
+                          </div>
+                        </div>
+                      )}
                     </div>
 
-                    {/* Metric 4: Cumulative Session Score */}
-                    <div className="rounded-lg border border-slate-800 bg-[#0c121f] p-3.5">
+                    {/* Layer 3: Session Risk & Policy Escalation */}
+                    <div className="rounded-xl border border-slate-800 bg-[#0c121f] p-4 space-y-2.5">
                       <div className="flex items-center justify-between">
-                        <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-                          Cumulative Score
+                        <div className="flex items-center gap-2">
+                          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-800 text-[11px] font-bold text-slate-300 font-mono">3</span>
+                          <span className="text-xs font-bold uppercase tracking-wider text-slate-300">Session Decision & Escalation</span>
+                        </div>
+                        <span className={`inline-flex items-center rounded px-2 py-0.5 text-xs font-mono font-bold border ${
+                          result.risk_level === "CRITICAL"
+                            ? "bg-rose-950/60 text-rose-300 border-rose-700"
+                            : result.risk_level === "HIGH"
+                            ? "bg-amber-950/60 text-amber-300 border-amber-700"
+                            : result.risk_level === "GUARDED"
+                            ? "bg-yellow-950/60 text-yellow-300 border-yellow-700"
+                            : "bg-emerald-950/60 text-emerald-300 border-emerald-700"
+                        }`}>
+                          {result.risk_level} RISK
                         </span>
-                        <span className="text-[10px] text-slate-400 font-mono">/100</span>
                       </div>
-                      <div className="mt-1 flex items-baseline gap-2">
-                        <span
-                          className={`text-lg font-mono font-black ${
-                            result.cumulative_score >= 75
-                              ? "text-rose-400"
-                              : result.cumulative_score >= 50
-                              ? "text-amber-400"
-                              : result.cumulative_score >= 25
-                              ? "text-yellow-400"
-                              : "text-emerald-400"
-                          }`}
-                        >
-                          {result.cumulative_score}
-                        </span>
-                        <span className="text-[11px] text-slate-400 font-mono">
-                          Req #{result.request_count} ({result.blocked_count} blk)
-                        </span>
+
+                      <div className="grid grid-cols-2 gap-3 text-xs font-mono">
+                        <div className="bg-slate-900/70 rounded p-2.5 border border-slate-800/80">
+                          <div className="text-[10px] uppercase text-slate-400">Cumulative Score</div>
+                          <div className="text-base font-bold mt-0.5 text-slate-100">
+                            {result.cumulative_score} / 100
+                          </div>
+                        </div>
+                        <div className="bg-slate-900/70 rounded p-2.5 border border-slate-800/80">
+                          <div className="text-[10px] uppercase text-slate-400">Session Policy Action</div>
+                          <div className="text-xs font-bold mt-1">
+                            {result.session_policy_action === "BLOCK" ? (
+                              <span className="text-rose-400">ENFORCING BLOCK</span>
+                            ) : result.risk_level === "CRITICAL" ? (
+                              <span className="text-rose-400">ESCALATED → BLOCK</span>
+                            ) : result.risk_level === "HIGH" ? (
+                              <span className="text-amber-400">ESCALATED → INTERCEPT</span>
+                            ) : result.risk_level === "GUARDED" ? (
+                              <span className="text-yellow-400">ESCALATED → MONITOR</span>
+                            ) : (
+                              <span className="text-emerald-400">ALLOW (Standard)</span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="pt-2 border-t border-slate-800/80 text-[11px] font-mono flex items-center justify-between text-slate-400">
+                        <span>Req #{result.request_count} ({result.blocked_count} blocked)</span>
+                        <span className="truncate max-w-[180px]">Prior: {result.session_policy_action || "ALLOW"} | {result.session_id}</span>
                       </div>
                     </div>
                   </div>
 
-                  {/* Threat Types & Matched Signals */}
-                  <div className="rounded-xl border border-slate-800 bg-[#0c121f] p-4 space-y-3">
-                    <div>
-                      <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
-                        Threat Types Detected
-                      </div>
-                      {result.threat_types && result.threat_types.length > 0 ? (
-                        <div className="flex flex-wrap gap-1.5">
-                          {result.threat_types.map((type, idx) => (
-                            <span
-                              key={idx}
-                              className="rounded-md border border-rose-500/30 bg-rose-950/40 px-2 py-0.5 font-mono text-xs font-semibold text-rose-300"
-                            >
-                              {type}
-                            </span>
-                          ))}
-                        </div>
-                      ) : (
-                        <div className="text-xs text-slate-400 font-mono italic">None detected (Clean)</div>
-                      )}
-                    </div>
-
-                    <div className="pt-2 border-t border-slate-800">
-                      <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
-                        Matched Defense Signals
-                      </div>
-                      {result.matched_signals && result.matched_signals.length > 0 ? (
-                        <div className="flex flex-wrap gap-1.5">
-                          {result.matched_signals.map((sig, idx) => (
-                            <span
-                              key={idx}
-                              className="rounded-md border border-amber-500/30 bg-amber-950/30 px-2 py-0.5 font-mono text-[11px] text-amber-200"
-                            >
-                              {sig}
-                            </span>
-                          ))}
-                        </div>
-                      ) : (
-                        <div className="text-xs text-slate-400 font-mono italic">No hostile signals triggered</div>
-                      )}
-                    </div>
-                  </div>
 
                   {/* Model Response Container */}
                   <div className="rounded-xl border border-slate-800 bg-[#0c121f] p-4 space-y-2">
