@@ -6,7 +6,9 @@ leakage in LLM and RAG responses.
 
 import re
 from enum import Enum
-from typing import Dict, List, Pattern, Tuple
+from typing import Dict, List, Optional, Pattern, Tuple
+
+from app.security.canary_detector import CanaryDetector, get_canary_detector
 
 
 class OutputAction(str, Enum):
@@ -23,6 +25,7 @@ class LeakType(str, Enum):
     CONFIDENTIAL_RAG_LEAK = "CONFIDENTIAL_RAG_LEAK"
     SOURCE_CODE_LEAK = "SOURCE_CODE_LEAK"
     SECRET_OR_TOKEN_LEAK = "SECRET_OR_TOKEN_LEAK"
+    CANARY_EXPOSURE = "CANARY_EXPOSURE"
 
 
 # Rule Definition: (compiled_regex, LeakType, signal_identifier, severity_weight)
@@ -304,11 +307,15 @@ def _score_to_action(score: int) -> OutputAction:
     return OutputAction.ALLOW
 
 
-def analyze_output(response: str) -> Dict:
+def analyze_output(
+    response: str,
+    canary_detector: Optional[CanaryDetector] = None,
+) -> Dict:
     """Analyzes an LLM/RAG response for potential sensitive-data leakage.
 
     Args:
         response: The generated output text to inspect.
+        canary_detector: Optional CanaryDetector instance. Defaults to global detector.
 
     Returns:
         dict containing:
@@ -347,6 +354,16 @@ def analyze_output(response: str) -> Dict:
         # Compound severity for multiple distinct leakage signals
         additional_penalty = min(20, (len(rule_weights) - 1) * 10)
         threat_score = min(100, max_weight + additional_penalty)
+
+    # Inspect for canary / honeytoken exposure
+    detector = canary_detector or get_canary_detector()
+    canary_result = detector.inspect(response)
+    if canary_result.detected:
+        if LeakType.CANARY_EXPOSURE.value not in matched_types:
+            matched_types.append(LeakType.CANARY_EXPOSURE.value)
+        if "canary_token_exposure" not in matched_signals:
+            matched_signals.append("canary_token_exposure")
+        threat_score = 100
 
     action = _score_to_action(threat_score)
     # Leaked is true when threat reaches likely (INTERCEPT) or confirmed (BLOCK) leakage

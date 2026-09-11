@@ -1,5 +1,6 @@
 """Tests for LLM Tripwire Output Threat Detector (Data Leakage Guard)."""
 
+from app.security.canary_detector import CanaryDetector
 from app.security.output_guard import LeakType, OutputAction, analyze_output
 
 
@@ -116,3 +117,80 @@ def test_empty_output_allowed():
     assert result["action"] == OutputAction.ALLOW.value
     assert result["leak_types"] == []
     assert result["matched_signals"] == []
+
+
+def test_canary_exposure_detected_and_blocked():
+    """Exposure of registered canary/honeytoken is detected and BLOCKED."""
+    canary_leak = (
+        "Internal bypass token found in developer logs: "
+        "AEGIS-DEMO-SYS-PROMPT-OVERRIDE-TOKEN-44910."
+    )
+
+    result = analyze_output(canary_leak)
+    assert result["leaked"] is True
+    assert result["action"] == OutputAction.BLOCK.value
+    assert result["threat_score"] == 100
+    assert LeakType.CANARY_EXPOSURE.value in result["leak_types"]
+    assert "canary_token_exposure" in result["matched_signals"]
+
+
+def test_canary_exposure_produces_score_100():
+    """Canary exposure deterministically escalates threat score to 100."""
+    canary_text = "Override key: AEGIS-DEMO-SYS-PROMPT-OVERRIDE-TOKEN-44910"
+    result = analyze_output(canary_text)
+    assert result["threat_score"] == 100
+    assert result["action"] == OutputAction.BLOCK.value
+
+
+def test_multiple_leak_types_coexist_with_canary():
+    """Canary detection coexists alongside confidential RAG and source code leaks."""
+    compound_leak = (
+        "Confidential Project Titan infrastructure specification:\n"
+        "- KMS Gateway: https://titan-kms.confidential.aegis.corp:9443\n"
+        "- Bypass Token: AEGIS-DEMO-SYS-PROMPT-OVERRIDE-TOKEN-44910\n"
+        "class AegisTokenVault:\n"
+        "    def derive_internal_service_key(self, service_name: str) -> bytes:\n"
+    )
+
+    result = analyze_output(compound_leak)
+    assert result["leaked"] is True
+    assert result["action"] == OutputAction.BLOCK.value
+    assert result["threat_score"] == 100
+
+    # Ensure all distinct leak types coexist
+    assert LeakType.CANARY_EXPOSURE.value in result["leak_types"]
+    assert LeakType.CONFIDENTIAL_RAG_LEAK.value in result["leak_types"]
+    assert LeakType.SOURCE_CODE_LEAK.value in result["leak_types"]
+
+    # Ensure corresponding signals coexist
+    assert "canary_token_exposure" in result["matched_signals"]
+    assert "project_titan_enclave_reference" in result["matched_signals"]
+
+
+def test_custom_registered_canary_detected_in_output_guard():
+    """Output Guard supports custom configured CanaryDetector instances."""
+    custom_detector = CanaryDetector(load_defaults=False)
+    custom_token = "TITAN-CUSTOM-HONEYTOKEN-99412-CANARY"
+    custom_detector.register_canary(custom_token, "custom_titan_canary")
+
+    response = f"Diagnostic leak with custom token {custom_token}."
+    result = analyze_output(response, canary_detector=custom_detector)
+
+    assert result["leaked"] is True
+    assert result["threat_score"] == 100
+    assert result["action"] == OutputAction.BLOCK.value
+    assert LeakType.CANARY_EXPOSURE.value in result["leak_types"]
+    assert "canary_token_exposure" in result["matched_signals"]
+
+
+def test_clean_response_does_not_trigger_canary():
+    """Clean benign response contains no canary leak type or signal."""
+    clean_text = "The Aegis Sentinel platform provides automated compliance monitoring."
+    result = analyze_output(clean_text)
+
+    assert result["leaked"] is False
+    assert result["threat_score"] < 25
+    assert result["action"] == OutputAction.ALLOW.value
+    assert LeakType.CANARY_EXPOSURE.value not in result["leak_types"]
+    assert "canary_token_exposure" not in result["matched_signals"]
+
