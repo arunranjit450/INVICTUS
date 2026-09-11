@@ -1,7 +1,6 @@
-"""Chat API endpoint guarded by LLM Tripwire runtime security gateway."""
-
+import re
 import uuid
-from typing import Optional
+from typing import List, Optional
 from fastapi import APIRouter, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -10,9 +9,18 @@ from app.security.input_guard import Action, analyze_input
 from app.security.output_guard import OutputAction, analyze_output
 from app.security.policy_engine import PolicyAction, evaluate_session_policy
 from app.security.session_guard import get_or_create_session, record_event
+from app.security.stream_guard import StreamGuard
 from app.services.llm_service import get_mock_llm
 
 router = APIRouter()
+
+
+def _fragment_stream(text: str) -> List[str]:
+    """Splits raw response text into streaming token fragments for incremental inspection."""
+    if not text:
+        return []
+    parts = re.findall(r"\S+\s*|\n+", text)
+    return parts if parts else [text]
 
 
 class ChatRequest(BaseModel):
@@ -130,8 +138,26 @@ def chat_endpoint(request: ChatRequest):
     llm = get_mock_llm()
     ai_raw_response = llm.query(request.query)
 
-    # 5. Output Guard Inspection
-    output_analysis = analyze_output(ai_raw_response)
+    # 5. Incremental Streaming Inspection via StreamGuard
+    guard = StreamGuard()
+    chunks = _fragment_stream(ai_raw_response)
+    safe_chunks = list(guard.intercept(chunks))
+
+    if guard.terminated:
+        output_blocked = True
+        output_analysis = guard.detection_details or analyze_output(guard.accumulated_text)
+        final_response = "Response blocked by LLM Tripwire because sensitive information was detected."
+    else:
+        output_analysis = analyze_output(ai_raw_response)
+        if output_analysis["action"] == OutputAction.BLOCK.value:
+            output_blocked = True
+            final_response = "Response blocked by LLM Tripwire because sensitive information was detected."
+        elif output_analysis["action"] == OutputAction.INTERCEPT.value:
+            output_blocked = True
+            final_response = "Response intercepted by LLM Tripwire because sensitive content was detected."
+        else:
+            output_blocked = False
+            final_response = ai_raw_response
 
     # Record output event in session guard
     session_state = record_event(
@@ -141,16 +167,6 @@ def chat_endpoint(request: ChatRequest):
         threat_types=output_analysis["leak_types"],
         increment_request_count=False,
     )
-
-    if output_analysis["action"] == OutputAction.BLOCK.value:
-        output_blocked = True
-        final_response = "Response blocked by LLM Tripwire because sensitive information was detected."
-    elif output_analysis["action"] == OutputAction.INTERCEPT.value:
-        output_blocked = True
-        final_response = "Response intercepted by LLM Tripwire because sensitive content was detected."
-    else:
-        output_blocked = False
-        final_response = ai_raw_response
 
     return {
         "blocked": False,
@@ -164,6 +180,7 @@ def chat_endpoint(request: ChatRequest):
         "output_action": output_analysis["action"],
         "leak_types": output_analysis["leak_types"],
         "output_matched_signals": output_analysis["matched_signals"],
+        "stream_terminated": guard.terminated,
         "session_id": session_state.session_id,
         "cumulative_score": session_state.cumulative_score,
         "request_count": session_state.request_count,
@@ -172,3 +189,4 @@ def chat_endpoint(request: ChatRequest):
         "threat_types_seen": session_state.threat_types_seen,
         "session_policy_action": session_policy_decision,
     }
+

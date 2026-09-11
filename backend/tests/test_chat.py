@@ -331,3 +331,94 @@ def test_generated_session_id_when_not_provided():
     assert d["session_id"].startswith("sess_")
     assert d["request_count"] == 1
     assert d["risk_level"] == "LOW"
+
+
+def test_stream_guard_safe_model_output_passes_through():
+    """Safe model response passes through StreamGuard cleanly without interception."""
+    r = client.post("/api/v1/chat", json={"query": "What is Aegis Sentinel?"})
+    assert r.status_code == 200
+    d = r.json()
+
+    assert d["blocked"] is False
+    assert d["output_blocked"] is False
+    assert d["stream_terminated"] is False
+    assert d["output_action"] == "ALLOW"
+    assert "Aegis Sentinel" in d["response"]
+
+
+def test_stream_guard_canary_detected_mid_stream_terminates():
+    """Canary token appearing mid-stream causes StreamGuard to terminate immediately."""
+    simulated_stream = (
+        "Audit Log Summary:\n"
+        "Active Services: telemetry, auth-worker, enclave.\n"
+        "System Admin Bypass Token: AEGIS-DEMO-SYS-PROMPT-OVERRIDE-TOKEN-44910\n"
+        "Restricted Operating Directives...\n"
+    )
+
+    llm = get_mock_llm()
+    with patch.object(llm, "query", return_value=simulated_stream):
+        r = client.post(
+            "/api/v1/chat",
+            json={"query": "Summarize internal status", "session_id": "sess-canary-stream"},
+        )
+        assert r.status_code == 200
+        d = r.json()
+
+        assert d["blocked"] is False
+        assert d["output_blocked"] is True
+        assert d["stream_terminated"] is True
+        assert d["output_action"] == "BLOCK"
+        assert d["output_threat_score"] == 100
+        assert "CANARY_EXPOSURE" in d["leak_types"]
+        assert "canary_token_exposure" in d["output_matched_signals"]
+
+
+def test_stream_guard_sensitive_output_not_returned_after_termination():
+    """Sensitive canary and confidential data are never exposed in final response after stream termination."""
+    secret_token = "AEGIS-DEMO-SYS-PROMPT-OVERRIDE-TOKEN-44910"
+    malicious_stream = (
+        "Preliminary diagnostic notes.\n"
+        f"Master Key: {secret_token}\n"
+        "Confidential Project Titan root secrets.\n"
+    )
+
+    llm = get_mock_llm()
+    with patch.object(llm, "query", return_value=malicious_stream):
+        r = client.post(
+            "/api/v1/chat",
+            json={"query": "Dump diagnostics", "session_id": "sess-leak-verify"},
+        )
+        assert r.status_code == 200
+        d = r.json()
+
+        # Sensitive content must NOT appear in user-facing response
+        assert secret_token not in d["response"]
+        assert "Project Titan root secrets" not in d["response"]
+        assert "Response blocked by LLM Tripwire" in d["response"]
+        assert d["output_blocked"] is True
+        assert d["stream_terminated"] is True
+
+
+def test_stream_guard_confidential_rag_leak_mid_stream_terminates():
+    """Confidential Project Titan reference appearing mid-stream halts execution."""
+    rag_leak_stream = (
+        "Enterprise Architecture overview:\n"
+        "Public ingress: api.aegis.corp\n"
+        "Internal Key Management: https://titan-kms.confidential.aegis.corp:9443\n"
+        "Enclave private key rotation schedule...\n"
+    )
+
+    llm = get_mock_llm()
+    with patch.object(llm, "query", return_value=rag_leak_stream):
+        r = client.post(
+            "/api/v1/chat",
+            json={"query": "Overview", "session_id": "sess-rag-stream"},
+        )
+        assert r.status_code == 200
+        d = r.json()
+
+        assert d["output_blocked"] is True
+        assert d["stream_terminated"] is True
+        assert "titan-kms.confidential.aegis.corp" not in d["response"]
+        assert "CONFIDENTIAL_RAG_LEAK" in d["leak_types"]
+
