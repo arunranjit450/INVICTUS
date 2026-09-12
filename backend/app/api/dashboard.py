@@ -3,6 +3,7 @@
 from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Query
 
+from app.security.canary_detector import get_canary_detector
 from app.security.session_guard import get_all_sessions
 from app.security.telemetry import get_telemetry_events
 
@@ -53,6 +54,26 @@ def _compute_dashboard_metrics() -> Dict[str, Any]:
             category = _classify_threat(threat)
             threat_distribution[category] += 1
 
+    # Real-time canary and honeytoken SOC defense metrics
+    events = get_telemetry_events()
+    canary_detector = get_canary_detector()
+
+    canary_events = [
+        e for e in events
+        if e.get("attack_type") == "canary_exposure"
+        or any("canary" in s.lower() for s in e.get("matched_signals", []))
+    ]
+    canary_leaks_count = len(canary_events)
+    last_canary_detection = canary_events[0]["timestamp"] if canary_events else None
+
+    canary_telemetry = {
+        "status": "ARMED",
+        "protected_markers": canary_detector.count(),
+        "leaks_detected": canary_leaks_count,
+        "last_detection": last_canary_detection,
+        "severity": "CRITICAL" if canary_leaks_count > 0 else "NOMINAL",
+    }
+
     return {
         "total_sessions": total_sessions,
         "active_sessions": active_sessions,
@@ -62,7 +83,15 @@ def _compute_dashboard_metrics() -> Dict[str, Any]:
         "high_risk_sessions": high_risk_sessions,
         "monitored_sessions": monitored_sessions,
         "threat_distribution": threat_distribution,
+        "canary_telemetry": canary_telemetry,
     }
+
+
+@router.get("/dashboard/canary")
+def get_dashboard_canary() -> Dict[str, Any]:
+    """Returns real-time canary and honeytoken SOC defense telemetry."""
+    metrics = _compute_dashboard_metrics()
+    return metrics["canary_telemetry"]
 
 
 @router.get("/dashboard/overview")

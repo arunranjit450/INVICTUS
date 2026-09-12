@@ -11,6 +11,14 @@ interface ThreatDistribution {
   other: number;
 }
 
+interface CanaryTelemetry {
+  status: "ARMED" | "ACTIVE" | string;
+  protected_markers: number;
+  leaks_detected: number;
+  last_detection: string | null;
+  severity: "CRITICAL" | "NOMINAL" | string;
+}
+
 interface DashboardSummary {
   total_sessions: number;
   active_sessions: number;
@@ -20,6 +28,7 @@ interface DashboardSummary {
   high_risk_sessions: number;
   monitored_sessions: number;
   threat_distribution: ThreatDistribution;
+  canary_telemetry?: CanaryTelemetry;
 }
 
 export default function SecurityDashboard() {
@@ -280,8 +289,8 @@ export default function SecurityDashboard() {
                 </div>
               </div>
 
-              {/* 4 Guard Status Badges */}
-              <div className="grid grid-cols-2 gap-2 text-xs font-mono shrink-0">
+              {/* 6 Defense Guard Status Badges */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs font-mono shrink-0">
                 <div className="rounded border border-emerald-500/30 bg-emerald-950/30 px-3 py-1.5 text-emerald-300 flex items-center justify-between gap-2">
                   <span>Input Guard:</span>
                   <span className="font-bold text-emerald-400">ACTIVE</span>
@@ -289,6 +298,22 @@ export default function SecurityDashboard() {
                 <div className="rounded border border-emerald-500/30 bg-emerald-950/30 px-3 py-1.5 text-emerald-300 flex items-center justify-between gap-2">
                   <span>Output Guard:</span>
                   <span className="font-bold text-emerald-400">ACTIVE</span>
+                </div>
+                <div className="rounded border border-emerald-500/30 bg-emerald-950/30 px-3 py-1.5 text-emerald-300 flex items-center justify-between gap-2">
+                  <span>Stream Guard:</span>
+                  <span className="font-bold text-emerald-400">ACTIVE</span>
+                </div>
+                <div className={`rounded border px-3 py-1.5 flex items-center justify-between gap-2 ${
+                  (data?.canary_telemetry?.leaks_detected ?? 0) > 0
+                    ? "border-rose-500/50 bg-rose-950/40 text-rose-300"
+                    : "border-emerald-500/30 bg-emerald-950/30 text-emerald-300"
+                }`}>
+                  <span>Honeytokens:</span>
+                  <span className={`font-bold ${
+                    (data?.canary_telemetry?.leaks_detected ?? 0) > 0 ? "text-rose-400" : "text-emerald-400"
+                  }`}>
+                    {data?.canary_telemetry?.status || "ARMED"}
+                  </span>
                 </div>
                 <div className="rounded border border-emerald-500/30 bg-emerald-950/30 px-3 py-1.5 text-emerald-300 flex items-center justify-between gap-2">
                   <span>Session Guard:</span>
@@ -441,6 +466,136 @@ export default function SecurityDashboard() {
               <div className="mt-1 text-xs text-slate-400">
                 Policy status: <span className="text-rose-400 font-semibold">Automatic BLOCK</span>
               </div>
+            </div>
+          </div>
+
+          {/* Honeytoken & Canary Defense System */}
+          <div className={`rounded-xl border p-6 shadow-lg transition-all ${
+            (data?.canary_telemetry?.leaks_detected ?? 0) > 0
+              ? "border-rose-500/60 bg-gradient-to-r from-rose-950/40 via-slate-900/90 to-slate-900/90 shadow-rose-950/30"
+              : "border-slate-800/80 bg-gradient-to-r from-amber-950/15 via-slate-900/70 to-slate-900/70 shadow-black/40"
+          }`}>
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800/80 pb-4">
+              <div className="flex items-center gap-3.5">
+                <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border ${
+                  (data?.canary_telemetry?.leaks_detected ?? 0) > 0
+                    ? "bg-rose-500/15 text-rose-400 border-rose-500/40"
+                    : "bg-amber-500/10 text-amber-400 border-amber-500/30"
+                }`}>
+                  <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+                  </svg>
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-base font-bold text-white tracking-tight">
+                      Canary &amp; Honeytoken Defense
+                    </h3>
+                    <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-bold border uppercase tracking-wider font-mono ${
+                      (data?.canary_telemetry?.leaks_detected ?? 0) > 0
+                        ? "bg-rose-950/80 text-rose-300 border-rose-600 animate-pulse"
+                        : "bg-emerald-950/60 text-emerald-300 border-emerald-600/60"
+                    }`}>
+                      {(data?.canary_telemetry?.leaks_detected ?? 0) > 0 ? "LEAK INTERCEPTED" : "SYSTEM ARMED"}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Synthetic tripwires planted in enterprise prompt context to detect unauthorized exfiltration attempts
+                  </p>
+                </div>
+              </div>
+
+              {/* Status indicator pill */}
+              <div className="flex items-center gap-2 font-mono text-xs">
+                <div className={`flex items-center gap-2 rounded-lg border px-3 py-1.5 ${
+                  (data?.canary_telemetry?.leaks_detected ?? 0) > 0
+                    ? "border-rose-700 bg-rose-950/60 text-rose-300"
+                    : "border-emerald-800/80 bg-emerald-950/40 text-emerald-300"
+                }`}>
+                  <span className={`h-2 w-2 rounded-full ${
+                    (data?.canary_telemetry?.leaks_detected ?? 0) > 0 ? "bg-rose-500 animate-ping" : "bg-emerald-400"
+                  }`} />
+                  <span>Status: <strong className="font-bold">{data?.canary_telemetry?.status || "ARMED"}</strong></span>
+                </div>
+              </div>
+            </div>
+
+            {/* 4 Security Telemetry Metrics */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-5">
+              {/* 1. Canary Status */}
+              <div className="rounded-lg border border-slate-800/80 bg-[#090d16]/70 p-3.5">
+                <div className="text-[11px] font-medium text-slate-400 uppercase tracking-wider">
+                  Canary Status
+                </div>
+                <div className={`mt-1 text-xl font-bold font-mono ${
+                  (data?.canary_telemetry?.leaks_detected ?? 0) > 0 ? "text-rose-400" : "text-emerald-400"
+                }`}>
+                  {data?.canary_telemetry?.status || "ARMED"}
+                </div>
+                <div className="mt-1 text-[11px] text-slate-400">
+                  Deterministic Tripwire
+                </div>
+              </div>
+
+              {/* 2. Protected Markers */}
+              <div className="rounded-lg border border-slate-800/80 bg-[#090d16]/70 p-3.5">
+                <div className="text-[11px] font-medium text-slate-400 uppercase tracking-wider">
+                  Protected Markers
+                </div>
+                <div className="mt-1 text-xl font-bold font-mono text-cyan-400">
+                  {data?.canary_telemetry?.protected_markers ?? 1} Active
+                </div>
+                <div className="mt-1 text-[11px] text-slate-400">
+                  Zero-Exposure Tokens
+                </div>
+              </div>
+
+              {/* 3. Leaks Detected */}
+              <div className="rounded-lg border border-slate-800/80 bg-[#090d16]/70 p-3.5">
+                <div className="text-[11px] font-medium text-slate-400 uppercase tracking-wider">
+                  Leaks Detected
+                </div>
+                <div className={`mt-1 text-xl font-bold font-mono ${
+                  (data?.canary_telemetry?.leaks_detected ?? 0) > 0 ? "text-rose-400" : "text-slate-300"
+                }`}>
+                  {data?.canary_telemetry?.leaks_detected ?? 0}
+                </div>
+                <div className="mt-1 text-[11px] text-slate-400">
+                  {(data?.canary_telemetry?.leaks_detected ?? 0) > 0 ? "Exposures Quarantined" : "No Exposures"}
+                </div>
+              </div>
+
+              {/* 4. Severity & Last Detection */}
+              <div className="rounded-lg border border-slate-800/80 bg-[#090d16]/70 p-3.5">
+                <div className="text-[11px] font-medium text-slate-400 uppercase tracking-wider">
+                  Canary Severity
+                </div>
+                <div className={`mt-1 text-xl font-bold font-mono ${
+                  data?.canary_telemetry?.severity === "CRITICAL"
+                    ? "text-rose-400 font-extrabold"
+                    : "text-emerald-400"
+                }`}>
+                  {data?.canary_telemetry?.severity || "NOMINAL"}
+                </div>
+                <div className="mt-1 text-[11px] text-slate-400 truncate">
+                  {data?.canary_telemetry?.last_detection
+                    ? `Last: ${new Date(data.canary_telemetry.last_detection).toLocaleTimeString()}`
+                    : "Last: None (Clean)"}
+                </div>
+              </div>
+            </div>
+
+            {/* Zero-Exposure Security Guarantee Notice */}
+            <div className="mt-4 flex flex-col sm:flex-row items-start sm:items-center justify-between rounded-lg border border-slate-800/60 bg-black/30 px-3.5 py-2.5 text-xs text-slate-400 gap-2">
+              <div className="flex items-center gap-2">
+                <svg className="h-4 w-4 text-emerald-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                </svg>
+                <span>
+                  <strong>Zero-Exposure Architecture:</strong> Honeytoken string values are securely isolated in the backend detector and never sent to or displayed by the frontend.
+                </span>
+              </div>
+              <span className="shrink-0 font-mono text-[11px] text-emerald-400/80">Stream Guard: ACTIVE</span>
             </div>
           </div>
 

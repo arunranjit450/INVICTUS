@@ -323,4 +323,43 @@ def test_dashboard_sessions_endpoint_on_api_prefix():
     assert data[0]["session_id"] == "sess-prefix-test"
 
 
+def test_dashboard_canary_telemetry_endpoint():
+    """Verify /api/dashboard/canary returns armed status and live leak counts."""
+    # 1. Clean state
+    res = client.get("/api/dashboard/canary")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "ARMED"
+    assert data["protected_markers"] >= 1
+    assert data["leaks_detected"] == 0
+    assert data["severity"] == "NOMINAL"
+    assert data["last_detection"] is None
+
+    # 2. Record a canary leak event
+    record_telemetry_event(
+        session_id="sess-canary-test",
+        attack_type="canary_exposure",
+        severity="CRITICAL",
+        threat_score=100,
+        enforcement_action="BLOCK",
+        matched_signals=["canary_token_exposure"],
+        cumulative_session_score=100,
+    )
+
+    res_after = client.get("/api/dashboard/canary")
+    assert res_after.status_code == 200
+    data_after = res_after.json()
+    assert data_after["status"] == "ARMED"
+    assert data_after["leaks_detected"] == 1
+    assert data_after["severity"] == "CRITICAL"
+    assert data_after["last_detection"] is not None
+
+    # 3. Overview also contains canary_telemetry
+    overview_res = client.get("/api/dashboard/overview")
+    assert overview_res.status_code == 200
+    assert "canary_telemetry" in overview_res.json()
+    assert overview_res.json()["canary_telemetry"]["leaks_detected"] == 1
+
+
+
 

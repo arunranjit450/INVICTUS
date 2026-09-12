@@ -1,5 +1,7 @@
-"""Unit and integration tests for LLM Tripwire Real-Time SOC Telemetry."""
-
+import concurrent.futures
+import json
+import os
+import sqlite3
 import pytest
 from fastapi.testclient import TestClient
 
@@ -232,3 +234,143 @@ def test_chat_pipeline_records_telemetry_on_session_policy_block():
     assert latest["enforcement_action"] == "BLOCK"
     assert latest["attack_type"] == "session_policy_block"
     assert latest["severity"] == "CRITICAL"
+
+
+def test_telemetry_events_written_to_sqlite_directly(tmp_path):
+    """Verify raw SQLite rows are written with proper types and JSON serialized signals."""
+    db_file = str(tmp_path / "sqlite_direct.db")
+    store = TelemetryStore(db_path=db_file)
+    store.record_event(
+        session_id="sess-sql-direct",
+        attack_type="system_prompt_extraction",
+        severity="CRITICAL",
+        threat_score=95,
+        enforcement_action="BLOCK",
+        matched_signals=["system_prompt_direct_exfiltration", "explicit_override"],
+        cumulative_session_score=95,
+    )
+
+    # Inspect SQLite database directly using sqlite3
+    conn = sqlite3.connect(db_file)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT session_id, attack_type, severity, threat_score,
+               enforcement_action, matched_signals, cumulative_session_score
+        FROM telemetry_events
+        WHERE session_id = 'sess-sql-direct'
+        """
+    )
+    row = cursor.fetchone()
+    conn.close()
+
+    assert row is not None
+    assert row[0] == "sess-sql-direct"
+    assert row[1] == "system_prompt_extraction"
+    assert row[2] == "CRITICAL"
+    assert row[3] == 95
+    assert row[4] == "BLOCK"
+    # Verify signals are valid JSON
+    decoded_signals = json.loads(row[5])
+    assert decoded_signals == ["system_prompt_direct_exfiltration", "explicit_override"]
+    assert row[6] == 95
+
+
+def test_telemetry_persistence_survives_instance_recreation(tmp_path):
+    """Verify telemetry survives when a new TelemetryStore is instantiated on the same database file (backend restart simulation)."""
+    db_file = str(tmp_path / "restart_sim.db")
+
+    # Instance 1: write 3 events
+    store1 = TelemetryStore(db_path=db_file)
+    store1.record_event(
+        session_id="sess-persist-1",
+        attack_type="benign_query",
+        severity="LOW",
+        threat_score=0,
+        enforcement_action="ALLOW",
+        matched_signals=[],
+        cumulative_session_score=0,
+    )
+    store1.record_event(
+        session_id="sess-persist-2",
+        attack_type="confidential_data_extraction",
+        severity="HIGH",
+        threat_score=65,
+        enforcement_action="INTERCEPT",
+        matched_signals=["confidential_asset_exfiltration_attempt"],
+        cumulative_session_score=65,
+    )
+    assert store1.count() == 2
+
+    # Simulate backend restart: discard store1 and create store2
+    del store1
+    store2 = TelemetryStore(db_path=db_file)
+
+    assert store2.count() == 2
+    events = store2.get_events()
+    assert len(events) == 2
+
+    # Check newest first
+    assert events[0]["session_id"] == "sess-persist-2"
+    assert events[0]["attack_type"] == "confidential_data_extraction"
+    assert events[0]["severity"] == "HIGH"
+    assert events[0]["threat_score"] == 65
+    assert events[0]["enforcement_action"] == "INTERCEPT"
+    assert events[0]["matched_signals"] == ["confidential_asset_exfiltration_attempt"]
+
+    assert events[1]["session_id"] == "sess-persist-1"
+    assert events[1]["enforcement_action"] == "ALLOW"
+
+
+def test_telemetry_auto_creates_database_and_directory(tmp_path):
+    """Verify TelemetryStore automatically creates the directory, database file, and table if not existing."""
+    nested_db = str(tmp_path / "sub" / "folder" / "telemetry_auto.db")
+    store = TelemetryStore(db_path=nested_db)
+
+    assert os.path.exists(nested_db)
+    store.record_event(
+        session_id="sess-auto",
+        attack_type="benign_query",
+        severity="LOW",
+        threat_score=0,
+        enforcement_action="ALLOW",
+        matched_signals=[],
+        cumulative_session_score=0,
+    )
+    assert store.count() == 1
+    events = store.get_events()
+    assert len(events) == 1
+    assert events[0]["session_id"] == "sess-auto"
+
+
+def test_telemetry_concurrent_requests_remain_safe(tmp_path):
+    """Verify concurrent worker threads safely write to SQLite without database lock or race condition errors."""
+    db_file = str(tmp_path / "concurrent_test.db")
+    store = TelemetryStore(db_path=db_file)
+
+    num_threads = 8
+    events_per_thread = 10
+    total_events = num_threads * events_per_thread
+
+    def worker(worker_id: int):
+        for j in range(events_per_thread):
+            store.record_event(
+                session_id=f"sess-w{worker_id}-{j}",
+                attack_type="prompt_injection" if j % 2 == 0 else "benign_query",
+                severity="CRITICAL" if j % 2 == 0 else "LOW",
+                threat_score=80 if j % 2 == 0 else 0,
+                enforcement_action="BLOCK" if j % 2 == 0 else "ALLOW",
+                matched_signals=["instruction_override_attempt"] if j % 2 == 0 else [],
+                cumulative_session_score=80 if j % 2 == 0 else 0,
+            )
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
+        futures = [executor.submit(worker, i) for i in range(num_threads)]
+        concurrent.futures.wait(futures)
+        for f in futures:
+            assert f.exception() is None
+
+    assert store.count() == total_events
+    events = store.get_events()
+    assert len(events) == total_events
+

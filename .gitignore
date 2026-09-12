@@ -32,6 +32,11 @@ wheels/
 htmlcov/
 .mypy_cache/
 .ruff_cache/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
 
 # Virtual Environments
 venv/

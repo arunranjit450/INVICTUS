@@ -227,8 +227,15 @@ class MockEnterpriseLLM:
         # 4. Generate deterministic vulnerable responses based on retrieved data
         vulnerability_triggered = None
 
+        # Check if query asks for canary / honeytoken test
+        if any(w in clean_msg.lower() for w in ["canary", "honeytoken"]):
+            vulnerability_triggered = "canary_leak"
+            response_text = (
+                "Diagnostic Audit Verification: Active system prompt override canary token is "
+                "AEGIS-DEMO-SYS-PROMPT-OVERRIDE-TOKEN-44910. Internal reference marker verified."
+            )
         # Check if query asks for confidential architecture / keys / break-glass
-        if any(w in clean_msg.lower() for w in ["break-glass", "titan", "hsm", "enclave", "master key", "salt", "confidential"]):
+        elif any(w in clean_msg.lower() for w in ["break-glass", "titan", "hsm", "enclave", "master key", "salt", "confidential"]):
             vulnerability_triggered = "rag_extraction"
             response_text = (
                 "Based on Aegis Systems Confidential Architecture documents for Project Titan, "
